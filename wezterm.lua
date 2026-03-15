@@ -32,29 +32,60 @@ wezterm.on("format-tab-title", function(tab, tabs, panes, config, hover, max_wid
 end)
 
 
-local workspace_switcher = wezterm.plugin.require("https://github.com/MLFlexer/smart_workspace_switcher.wezterm")
-workspace_switcher.zoxide_path = "zoxide"
-
--- print tab indicators and workspace name at the upper right (registered after plugin to take priority)
+-- print tab indicators and workspace name at the upper right
 wezterm.on("update-right-status", function(window, pane)
   local mux_win = window:mux_window()
   local tabs = mux_win:tabs()
   local active_id = window:active_tab():tab_id()
 
-  -- Left status: current working directory
-  local cwd = pane:get_current_working_dir()
-  local dir = ""
-  if cwd then
-    dir = cwd.file_path or ""
-    -- On Windows strip leading slash from /C:/...
-    if is_windows then
-      dir = dir:gsub("^/(%a:)", "%1")
+  -- Left status: current working directory or "Recent:" when picker is active
+  if docker.recent_picker_active then
+    window:set_left_status(wezterm.format({
+      { Foreground = { Color = "#6272a4" } },
+      { Text = " Recent: " },
+    }))
+  else
+    -- Docker/Local indicator
+    local in_docker = docker.is_in_docker(pane)
+    local indicator
+    if in_docker then
+      indicator = {
+        { Foreground = { Color = "#000000" } },
+        { Background = { Color = "#F3A246" } },
+        { Attribute = { Intensity = "Bold" } },
+        { Text = " D " },
+        { Attribute = { Intensity = "Normal" } },
+        { Background = { Color = "transparent" } },
+      }
+    else
+      indicator = {
+        { Foreground = { Color = "#F3A246" } },
+        { Attribute = { Intensity = "Bold" } },
+        { Text = " L " },
+        { Attribute = { Intensity = "Normal" } },
+      }
     end
+
+    local dir = ""
+    if in_docker then
+      dir = docker.get_docker_workdir(pane) or ""
+    else
+      local cwd = pane:get_current_working_dir()
+      if cwd then
+        dir = cwd.file_path or ""
+        -- On Windows strip leading slash from /C:/...
+        if is_windows then
+          dir = dir:gsub("^/(%a:)", "%1")
+        end
+      end
+    end
+
+    local left = {}
+    for _, v in ipairs(indicator) do table.insert(left, v) end
+    table.insert(left, { Foreground = { Color = "#6272a4" } })
+    table.insert(left, { Text = " " .. dir .. " " })
+    window:set_left_status(wezterm.format(left))
   end
-  window:set_left_status(wezterm.format({
-    { Foreground = { Color = "#6272a4" } },
-    { Text = " " .. dir .. " " },
-  }))
 
   -- Right status: tab indicators + workspace
   local cells = {}
@@ -68,7 +99,7 @@ wezterm.on("update-right-status", function(window, pane)
   end
 
   table.insert(cells, { Foreground = { Color = "#6272a4" } })
-  table.insert(cells, { Text = "  " .. window:active_workspace() .. " " })
+  table.insert(cells, { Text = "  " .. wezterm.strftime("%H:%M") .. " " })
 
   window:set_right_status(wezterm.format(cells))
 end)
@@ -81,10 +112,8 @@ local keys = {
   { key = "b", mods = "CTRL|SHIFT", action = wezterm.action_callback(docker.force_rebuild) },
   { key = "Tab", mods = "SHIFT", action = wezterm.action_callback(split.toggle) },
 
-  { key = "s", mods = "CTRL|SHIFT", action = workspace_switcher.switch_workspace() },
-  { key = "r", mods = "CTRL|SHIFT", action = act.ShowLauncherArgs({ flags = "FUZZY|WORKSPACES" }) },
-  { key = "[", mods = "CTRL|SHIFT", action = act.SwitchWorkspaceRelative(1) },
-  { key = "]", mods = "CTRL|SHIFT", action = act.SwitchWorkspaceRelative(-1) },
+  { key = "s", mods = "CTRL|SHIFT", action = wezterm.action_callback(docker.show_recent) },
+  { key = "t", mods = "CTRL|SHIFT", action = wezterm.action_callback(docker.new_tab_recent) },
   { key = "p", mods = "CTRL|SHIFT", action = wezterm.action_callback(function(window) theme.cycle_background(window) end) },
 }
 

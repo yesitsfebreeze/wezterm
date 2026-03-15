@@ -58,7 +58,6 @@ end
 function M.run()
   local current = read_stamp()
   if current == VERSION then
-    wezterm.log_info("bootstrap: up to date (v" .. VERSION .. ")")
     return
   end
   wezterm.log_info("bootstrap: updating from v" .. (current or "none") .. " to v" .. VERSION)

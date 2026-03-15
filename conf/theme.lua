@@ -64,7 +64,7 @@ function M.apply_to_config(config)
   config.font_size = 13
   config.line_height = 1.01
 
-  config.window_padding = { left = 4, right = 0, top = 0, bottom = 0 }
+  config.window_padding = { left = 11, right = 7, top = 7, bottom = 0 }
 
   config.enable_tab_bar = true
   config.use_fancy_tab_bar = false
