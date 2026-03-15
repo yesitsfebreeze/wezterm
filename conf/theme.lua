@@ -1,37 +1,32 @@
-local theme_name = "Gooey (Gogh)"
-local cursor = "#F3A246"
-local background = "#19191f"
-local transparency = 0.7
-
 local wezterm = require("wezterm")
 
 local M = {}
 
-local state_file = wezterm.config_dir .. '/.image'
+local THEME = "Gooey (Gogh)"
+local CURSOR = "#F3A246"
+local BG = "#19191f"
+local OPACITY = 0.7
+local STATE_FILE = wezterm.config_dir .. "/.image"
 
 local function read_saved_image()
-  local f = io.open(state_file, 'r')
+  local f = io.open(STATE_FILE, "r")
   if not f then return nil end
-  local path = f:read('*l')
+  local path = f:read("*l")
   f:close()
-  return path and path ~= '' and path or nil
+  return (path and path ~= "") and path or nil
 end
 
 local function save_image(path)
-  local f = io.open(state_file, 'w')
+  local f = io.open(STATE_FILE, "w")
   if not f then return end
   f:write(path)
   f:close()
 end
 
 local function deep_copy(value)
-  if type(value) ~= "table" then
-    return value
-  end
+  if type(value) ~= "table" then return value end
   local out = {}
-  for k, v in pairs(value) do
-    out[k] = deep_copy(v)
-  end
+  for k, v in pairs(value) do out[k] = deep_copy(v) end
   return out
 end
 
@@ -44,6 +39,27 @@ local function deep_merge(dst, src)
     end
   end
   return dst
+end
+
+function M.build_background(image_path)
+  return {
+    { width = "100%", height = "100%", opacity = OPACITY * OPACITY, source = { Color = BG } },
+    { source = { File = image_path }, opacity = OPACITY },
+    { width = "100%", height = "100%", opacity = OPACITY, source = { Color = BG } },
+  }
+end
+
+function M.get_images()
+  local images = {}
+  for _, entry in ipairs(wezterm.glob(wezterm.config_dir .. "/images/*")) do
+    if entry:lower():match("%.png$") or entry:lower():match("%.jpe?g$")
+      or entry:lower():match("%.gif$") or entry:lower():match("%.bmp$")
+      or entry:lower():match("%.webp$") then
+      table.insert(images, entry)
+    end
+  end
+  table.sort(images)
+  return images
 end
 
 function M.apply_to_config(config)
@@ -72,93 +88,37 @@ function M.apply_to_config(config)
   config.show_new_tab_button_in_tab_bar = false
   config.tab_max_width = 0
 
-  local schemes = wezterm.color.get_builtin_schemes()
-  local scheme = schemes[theme_name]
-  local colors = deep_copy(scheme)
-  colors.cursor_bg = cursor
-  colors.cursor_border = cursor
-  colors.background = background
-
-  config.background = {
-    
-  }
-
-  local tab_fg = colors.background
-  local inactive_fg = colors.foreground
+  local colors = deep_copy(wezterm.color.get_builtin_schemes()[THEME])
+  colors.cursor_bg = CURSOR
+  colors.cursor_border = CURSOR
+  colors.background = BG
 
   deep_merge(colors, {
     tab_bar = {
       background = "transparent",
-      active_tab = { bg_color = tab_fg, fg_color = cursor, intensity = "Bold" },
-      inactive_tab = { bg_color = "transparent", fg_color = inactive_fg },
-      inactive_tab_hover = { bg_color = "transparent", fg_color = cursor },
-      new_tab = { bg_color = "transparent", fg_color = inactive_fg },
-      new_tab_hover = { bg_color = "transparent", fg_color = cursor },
+      active_tab = { bg_color = BG, fg_color = CURSOR, intensity = "Bold" },
+      inactive_tab = { bg_color = "transparent", fg_color = colors.foreground },
+      inactive_tab_hover = { bg_color = "transparent", fg_color = CURSOR },
+      new_tab = { bg_color = "transparent", fg_color = colors.foreground },
+      new_tab_hover = { bg_color = "transparent", fg_color = CURSOR },
     },
   })
 
   config.colors = colors
 
-
   local images = M.get_images()
-  local saved = read_saved_image()
-  local current = saved or images[1] or (wezterm.config_dir .. '/images/bg1.png')
-
-  config.background = {
-		{
-			width = "100%", height = "100%", opacity = transparency * transparency, source = { Color = colors.background }
-		},
-    {
-      source = { File = current },
-      opacity = transparency,
-    },
-    {
-      width = "100%", height = "100%", opacity = transparency, source = { Color = colors.background }
-    },
-  }
-end
-
-function M.get_images()
-  local images_dir = wezterm.config_dir .. '/images'
-  local images = {}
-  for _, entry in ipairs(wezterm.glob(images_dir .. '/*')) do
-    local lower = entry:lower()
-    if lower:match('%.png$') or lower:match('%.jpe?g$') or lower:match('%.gif$') or lower:match('%.bmp$') or lower:match('%.webp$') then
-      table.insert(images, entry)
-    end
-  end
-  table.sort(images)
-  return images
-end
-
-function M.build_background(image_path)
-  return {
-    {
-      width = "100%", height = "100%",
-      opacity = transparency * transparency,
-      source = { Color = background },
-    },
-    {
-      source = { File = image_path },
-      opacity = transparency,
-    },
-    {
-      width = "100%", height = "100%",
-      opacity = transparency,
-      source = { Color = background },
-    },
-  }
+  local current = read_saved_image() or images[1] or (wezterm.config_dir .. "/images/bg1.png")
+  config.background = M.build_background(current)
 end
 
 function M.cycle_background(window)
   local images = M.get_images()
   if #images == 0 then return end
 
-  local current_file = read_saved_image() or ''
-
+  local current = read_saved_image() or ""
   local next_index = 1
   for i, img in ipairs(images) do
-    if img == current_file then
+    if img == current then
       next_index = (i % #images) + 1
       break
     end
