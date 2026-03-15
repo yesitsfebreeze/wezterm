@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zsh \
     ca-certificates \
     openssh-client \
+    neovim \
+    tmux \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js (LTS) for Claude Code
@@ -29,15 +31,14 @@ RUN curl -sSL https://raw.githubusercontent.com/eza-community/eza/main/deb.asc |
     && apt-get update && apt-get install -y eza \
     && rm -rf /var/lib/apt/lists/*
 
+# Install oh-my-zsh system-wide so every runtime-created user can use it
+ENV ZSH=/opt/oh-my-zsh
+RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended \
+    && chmod -R 755 /opt/oh-my-zsh
+
 # Create default user
 RUN useradd -m -s /bin/zsh ${USERNAME} \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-
-# Install oh-my-zsh for the default user
-USER ${USERNAME}
-RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-
-USER root
 
 # Make /workspace directory
 RUN mkdir -p /workspace

@@ -115,6 +115,8 @@ local keys = {
   { key = "s", mods = "CTRL|SHIFT", action = wezterm.action_callback(docker.show_recent) },
   { key = "t", mods = "CTRL|SHIFT", action = wezterm.action_callback(docker.new_tab_recent) },
   { key = "p", mods = "CTRL|SHIFT", action = wezterm.action_callback(function(window) theme.cycle_background(window) end) },
+
+  { key = "v", mods = "CTRL", action = act.PasteFrom("Clipboard") },
 }
 
 config.keys = keys
