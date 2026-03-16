@@ -1,5 +1,5 @@
-.docker_build
-.docker_workspaces
-.image
-.recent
-.bootstrap
+nul
+.cache/
+id_rsa
+id_rsa.pub
+fonts/DMMono.ttf

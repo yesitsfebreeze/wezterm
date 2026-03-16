@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zsh \
     ca-certificates \
     openssh-client \
+    rsync \
     neovim \
     tmux \
     && rm -rf /var/lib/apt/lists/*
@@ -36,11 +37,11 @@ ENV ZSH=/opt/oh-my-zsh
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended \
     && chmod -R 755 /opt/oh-my-zsh
 
-# Create default user
-RUN useradd -m -s /bin/zsh ${USERNAME} \
-    && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+# Copy user setup script
+COPY scripts/setup-user.sh /usr/local/bin/setup-user.sh
+RUN chmod +x /usr/local/bin/setup-user.sh
 
-# Make /workspace directory
-RUN mkdir -p /workspace
+# Create mount points and workspace
+RUN mkdir -p /workspace /opt/host-ssh /opt/git-auth /opt/claude-auth /opt/opencode-auth
 
 CMD ["sleep", "infinity"]

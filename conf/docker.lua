@@ -3,26 +3,46 @@ local wezterm = require("wezterm")
 local M = {}
 
 local is_windows = os.getenv("OS") == "Windows_NT"
+local SEP = is_windows and "\\" or "/"
+local CACHE_DIR = wezterm.config_dir .. SEP .. ".cache"
 local CONTAINER_PREFIX = "capsule"
 local IMAGE_NAME = "capsule:latest"
 local DOCKERFILE_DIR = wezterm.config_dir
 local HOST_USER = is_windows and os.getenv("USERNAME") or os.getenv("USER")
-local RECENT_FILE = wezterm.config_dir .. (is_windows and "\\.recent" or "/.recent")
+local RECENT_FILE = CACHE_DIR .. SEP .. "recent"
 local MAX_RECENT = 20
 local DOCKERFILE = DOCKERFILE_DIR .. (is_windows and "\\Dockerfile" or "/Dockerfile")
-local BUILD_STAMP = wezterm.config_dir .. (is_windows and "\\.docker_build" or "/.docker_build")
-local DOTFILES_REPO = "https://github.com/yesitsfebreeze/dotfiles.git"
+local BUILD_STAMP = CACHE_DIR .. SEP .. "docker_build"
+local DOTFILES_REPO = "git@github.com:yesitsfebreeze/dotfiles.git"
+local SCRIPTS_DIR = wezterm.config_dir .. (is_windows and "\\scripts" or "/scripts")
 
 local home_dir = wezterm.home_dir
 local ssh_dir = home_dir .. (is_windows and "\\.ssh" or "/.ssh")
 local gitconfig = home_dir .. (is_windows and "\\.gitconfig" or "/.gitconfig")
 local claude_dir = home_dir .. (is_windows and "\\.claude" or "/.claude")
 local claude_json = home_dir .. (is_windows and "\\.claude.json" or "/.claude.json")
+local opencode_auth = home_dir .. (is_windows and "\\.local\\share\\opencode" or "/.local/share/opencode")
+local opencode_config = home_dir .. (is_windows and "\\.config\\opencode" or "/.config/opencode")
 
 M.recent_picker_active = false
 local docker_workdirs = {}
 local known_containers = {}
 local known_users = {}
+
+-- Extract git credentials via `git credential fill`
+local git_credentials_file = CACHE_DIR .. SEP .. "git-credentials"
+local git_credentials_refreshed = false
+
+local cache_dir_ensured = false
+local function ensure_cache_dir()
+  if cache_dir_ensured then return end
+  if is_windows then
+    os.execute('mkdir "' .. CACHE_DIR:gsub("/", "\\") .. '" 2>nul')
+  else
+    os.execute('mkdir -p "' .. CACHE_DIR .. '"')
+  end
+  cache_dir_ensured = true
+end
 
 local function docker_path(path)
   return path:gsub("\\", "/")
@@ -66,8 +86,28 @@ local function read_file(path)
 end
 
 local function write_file(path, content)
-  local f = io.open(path, "w")
+  ensure_cache_dir()
+  local f = io.open(path, "wb")
   if f then f:write(content); f:close() end
+end
+
+local function refresh_git_credentials()
+  if git_credentials_refreshed then return end
+  git_credentials_refreshed = true
+  local ok, stdout
+  if is_windows then
+    ok, stdout = run_cmd("powershell.exe", "-NoProfile", "-Command",
+      "& { echo 'protocol=https'; echo 'host=github.com' } | git credential fill")
+  else
+    ok, stdout = run_cmd("bash", "-c",
+      "printf 'protocol=https\\nhost=github.com\\n' | git credential fill")
+  end
+  if not ok then return end
+  local user = stdout:match("username=([^\r\n]+)")
+  local pass = stdout:match("password=([^\r\n]+)")
+  if user and pass then
+    write_file(git_credentials_file, "https://" .. user .. ":" .. pass .. "@github.com\n")
+  end
 end
 
 local function check_image_state()
@@ -88,152 +128,96 @@ local function check_image_state()
   return true, mtime
 end
 
-local function volume_mounts(host_dir)
+-- Volume mounts: .ssh is mounted directly into user home
+local function volume_mounts(host_dir, username)
+  refresh_git_credentials()
+  local user_home = "/home/" .. username
   local mount_src = docker_path(host_dir)
   local workdir = "/workspace/" .. dir_name(host_dir)
-  return {
+  local mounts = {
     mount_src .. ":" .. workdir,
-    docker_path(ssh_dir) .. ":/home/" .. HOST_USER .. "/.ssh:ro",
-    docker_path(gitconfig) .. ":/home/" .. HOST_USER .. "/.gitconfig:ro",
+    docker_path(ssh_dir) .. ":/opt/host-ssh:ro",
+    docker_path(gitconfig) .. ":/opt/git-auth/.gitconfig:ro",
     docker_path(claude_dir) .. ":/opt/claude-auth/.claude",
     docker_path(claude_json) .. ":/opt/claude-auth/.claude.json",
+    docker_path(opencode_auth) .. ":/opt/opencode-auth/data",
+    docker_path(opencode_config) .. ":/opt/opencode-auth/config",
   }
+  local f = io.open(git_credentials_file, "r")
+  if f then
+    f:close()
+    table.insert(mounts, 3, docker_path(git_credentials_file) .. ":/opt/git-auth/.git-credentials:ro")
+  end
+  return mounts
 end
 
-local function volume_flags(host_dir, sep)
+local function volume_args_list(host_dir, username)
+  local args = {}
+  for _, m in ipairs(volume_mounts(host_dir, username)) do
+    table.insert(args, "-v")
+    table.insert(args, m)
+  end
+  return args
+end
+
+local function volume_flags_str(host_dir, username, sep)
   local parts = {}
-  for _, m in ipairs(volume_mounts(host_dir)) do
+  for _, m in ipairs(volume_mounts(host_dir, username)) do
     table.insert(parts, sep .. '-v "' .. m .. '"')
   end
   return table.concat(parts, " ")
 end
 
-local function write_script(path, content)
-  local f = io.open(path, "w")
-  if not f then
-    wezterm.log_error("docker: failed to write " .. path)
-    return false
-  end
-  f:write(content)
-  f:close()
-  return true
-end
-
+-- Build + connect: calls external scripts
 local function pane_build_and_connect(pane, host_dir, mtime)
   local name = dir_name(host_dir)
   local cname = container_name(host_dir)
   local workdir = "/workspace/" .. name
-  local df = docker_path(DOCKERFILE)
-  local dd = docker_path(DOCKERFILE_DIR)
 
   os.remove(BUILD_STAMP)
   known_containers = {}
   known_users = {}
 
   if is_windows then
-    local script_path = (os.getenv("TEMP") or os.getenv("TMP") or "C:\\Temp") .. "\\capsule_build.ps1"
-    local stamp_write = mtime
-      and string.format('\nSet-Content -Path "%s" -Value "%s" -NoNewline', BUILD_STAMP, mtime)
-      or ""
+    local script = docker_path(SCRIPTS_DIR) .. "/build.ps1"
+    local vol_flags = volume_flags_str(host_dir, name, " `\n  ")
 
-    local script = string.format([[
-$ErrorActionPreference = 'Continue'
-$CNAME = "%s"
-$UNAME = "%s"
-$WORKDIR = "%s"
+    -- Build volume args as a PS array for splatting
+    local vol_parts = {}
+    for _, m in ipairs(volume_mounts(host_dir, name)) do
+      table.insert(vol_parts, '"-v"')
+      table.insert(vol_parts, '"' .. m .. '"')
+    end
+    local vol_array = table.concat(vol_parts, ", ")
 
-Write-Host ""
-Write-Host ">>> [capsule] Stopping old container/image..." -ForegroundColor DarkGray
-docker stop $CNAME 2>$null | Out-Null
-docker rm   $CNAME 2>$null | Out-Null
-docker rmi  %s 2>$null | Out-Null
-
-Write-Host ">>> [capsule] Building Docker image..." -ForegroundColor Cyan
-docker build -f "%s" --build-arg USERNAME=%s -t %s "%s"
-if ($LASTEXITCODE -ne 0) {
-  Write-Host ""
-  Write-Host ">>> [capsule] BUILD FAILED. Fix the Dockerfile and press Ctrl+Shift+D to retry." -ForegroundColor Red
-  return
-}%s
-
-Write-Host ">>> [capsule] Starting container..." -ForegroundColor Cyan
-docker run -d --name $CNAME%s --restart unless-stopped %s sleep infinity
-if ($LASTEXITCODE -ne 0) {
-  Write-Host ">>> [capsule] Failed to start container." -ForegroundColor Red
-  return
-}
-
-Write-Host ">>> [capsule] Setting up user '$UNAME'..." -ForegroundColor Cyan
-docker exec $CNAME id $UNAME 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) {
-  docker exec $CNAME useradd -m -s /bin/zsh $UNAME
-  docker exec $CNAME bash -c "echo '$UNAME ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers"
-}
-docker exec $CNAME bash -c "git clone %s /tmp/dotfiles-$UNAME 2>/dev/null; cp -rn /tmp/dotfiles-$UNAME/. /home/$UNAME/; rm -rf /tmp/dotfiles-$UNAME; chown -R ${UNAME}:$UNAME /home/$UNAME/; ln -sf /opt/claude-auth/.claude /home/$UNAME/.claude; ln -sf /opt/claude-auth/.claude.json /home/$UNAME/.claude.json"
-
-Write-Host ">>> [capsule] Connecting..." -ForegroundColor Green
-docker exec -it -u $UNAME -w $WORKDIR $CNAME zsh
-]],
-      cname, name, workdir,
-      IMAGE_NAME,
-      df, HOST_USER, IMAGE_NAME, dd,
-      stamp_write,
-      volume_flags(host_dir, " `\n  "), IMAGE_NAME,
-      DOTFILES_REPO
-    )
-
-    if not write_script(script_path, script) then return end
-    pane:send_text("& '" .. script_path .. "'\r")
+    pane:send_text(string.format(
+      "& '%s' -CName '%s' -Username '%s' -WorkDir '%s' -Image '%s' -Dockerfile '%s' -DockerfileDir '%s' -BuildUser '%s' -StampFile '%s' -DotfilesRepo '%s' -VolumeArgs %s\r",
+      script, cname, name, workdir, IMAGE_NAME,
+      docker_path(DOCKERFILE), docker_path(DOCKERFILE_DIR),
+      HOST_USER, BUILD_STAMP, DOTFILES_REPO, vol_array
+    ))
   else
-    local script_path = "/tmp/capsule_build.sh"
-    local stamp_write = mtime
-      and string.format("printf '%%s' '%s' > '%s'", mtime, BUILD_STAMP)
-      or "true"
+    local script = SCRIPTS_DIR .. "/build.sh"
+    local vol_flags = volume_flags_str(host_dir, name, " \\\n  ")
 
-    local script = string.format([[
-#!/usr/bin/env bash
-CNAME="%s"
-UNAME="%s"
-WORKDIR="%s"
+    -- Pass volume args as trailing arguments
+    local vol_parts = {}
+    for _, m in ipairs(volume_mounts(host_dir, name)) do
+      table.insert(vol_parts, '-v "' .. m .. '"')
+    end
+    local vol_str = table.concat(vol_parts, " ")
 
-echo ""
-echo ">>> [capsule] Stopping old container/image..."
-(docker stop "$CNAME"; docker rm "$CNAME"; docker rmi %s) 2>/dev/null || true
-
-echo ">>> [capsule] Building Docker image..."
-if ! docker build -f '%s' --build-arg USERNAME=%s -t %s '%s'; then
-  echo ""
-  echo ">>> [capsule] BUILD FAILED. Fix the Dockerfile and press Ctrl+Shift+D to retry."
-  exit 1
-fi
-%s
-
-echo ">>> [capsule] Starting container..."
-docker run -d --name "$CNAME"%s --restart unless-stopped %s sleep infinity || { echo ">>> [capsule] Failed to start container."; exit 1; }
-
-echo ">>> [capsule] Setting up user '$UNAME'..."
-docker exec "$CNAME" id "$UNAME" 2>/dev/null || \
-  (docker exec "$CNAME" useradd -m -s /bin/zsh "$UNAME" && \
-   docker exec "$CNAME" bash -c "echo '$UNAME ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers")
-docker exec "$CNAME" bash -c "git clone %s /tmp/dotfiles-$UNAME 2>/dev/null; cp -rn /tmp/dotfiles-$UNAME/. /home/$UNAME/; rm -rf /tmp/dotfiles-$UNAME; chown -R $UNAME:$UNAME /home/$UNAME/; ln -sf /opt/claude-auth/.claude /home/$UNAME/.claude; ln -sf /opt/claude-auth/.claude.json /home/$UNAME/.claude.json"
-
-echo ">>> [capsule] Connecting..."
-docker exec -it -u "$UNAME" -w "$WORKDIR" "$CNAME" zsh
-]],
-      cname, name, workdir,
-      IMAGE_NAME,
-      df, HOST_USER, IMAGE_NAME, dd,
-      stamp_write,
-      volume_flags(host_dir, " \\\n  "), IMAGE_NAME,
-      DOTFILES_REPO
-    )
-
-    if not write_script(script_path, script) then return end
-    pane:send_text("bash " .. script_path .. "\r")
+    pane:send_text(string.format(
+      "bash '%s' '%s' '%s' '%s' '%s' '%s' '%s' '%s' '%s' '%s' %s\r",
+      script, cname, name, workdir, IMAGE_NAME,
+      docker_path(DOCKERFILE), docker_path(DOCKERFILE_DIR),
+      HOST_USER, BUILD_STAMP, DOTFILES_REPO, vol_str
+    ))
   end
 end
 
-local function ensure_container(host_dir)
+-- Fast connect: container already running, just ensure user + exec
+local function ensure_container(host_dir, username)
   local cname = container_name(host_dir)
   local workdir = "/workspace/" .. dir_name(host_dir)
 
@@ -244,9 +228,8 @@ local function ensure_container(host_dir)
     run_cmd("docker", "rm", "-f", cname)
 
     local run_args = { "docker", "run", "-d", "--name", cname }
-    for _, m in ipairs(volume_mounts(host_dir)) do
-      table.insert(run_args, "-v")
-      table.insert(run_args, m)
+    for _, a in ipairs(volume_args_list(host_dir, username)) do
+      table.insert(run_args, a)
     end
     for _, a in ipairs({ "--restart", "unless-stopped", IMAGE_NAME, "sleep", "infinity" }) do
       table.insert(run_args, a)
@@ -263,6 +246,13 @@ local function ensure_container(host_dir)
   return workdir
 end
 
+local function ensure_user(cname, username)
+  if known_users[cname] and known_users[cname][username] then return end
+  run_cmd("docker", "exec", cname, "/usr/local/bin/setup-user.sh", username, DOTFILES_REPO)
+  if not known_users[cname] then known_users[cname] = {} end
+  known_users[cname][username] = true
+end
+
 local function pane_cwd(pane)
   local cwd_uri = pane:get_current_working_dir()
   if cwd_uri then
@@ -273,31 +263,17 @@ local function pane_cwd(pane)
   return wezterm.home_dir
 end
 
-local function ensure_user(cname, username)
-  if known_users[cname] and known_users[cname][username] then return end
-  local ok = run_cmd("docker", "exec", cname, "id", username)
-  if not ok then
-    run_cmd("docker", "exec", cname, "useradd", "-m", "-s", "/bin/zsh", username)
-    run_cmd("docker", "exec", cname, "bash", "-c",
-      "echo '" .. username .. " ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers")
+local function fast_connect(pane, host_dir)
+  local user = dir_name(host_dir)
+  local workdir = ensure_container(host_dir, user)
+  if not workdir then
+    docker_workdirs[pane:pane_id()] = nil
+    pane:send_text("echo '>>> [capsule] Error: failed to start container.'\r")
+    return
   end
-  run_cmd("docker", "exec", cname, "bash", "-c",
-    "git clone " .. DOTFILES_REPO .. " /tmp/dotfiles-" .. username .. " 2>/dev/null && " ..
-    "cp -rn /tmp/dotfiles-" .. username .. "/. /home/" .. username .. "/ && " ..
-    "rm -rf /tmp/dotfiles-" .. username .. "; " ..
-    "chown -R " .. username .. ":" .. username .. " /home/" .. username .. "/; " ..
-    "ln -sf /opt/claude-auth/.claude /home/" .. username .. "/.claude; " ..
-    "ln -sf /opt/claude-auth/.claude.json /home/" .. username .. "/.claude.json")
-  if not known_users[cname] then known_users[cname] = {} end
-  known_users[cname][username] = true
-end
-
-function M.is_in_docker(pane)
-  return (pane:get_foreground_process_name() or ""):find("docker") ~= nil
-end
-
-function M.get_docker_workdir(pane)
-  return docker_workdirs[pane:pane_id()]
+  local cname = container_name(host_dir)
+  ensure_user(cname, user)
+  pane:send_text(string.format("docker exec -it -u %s -w %s %s zsh\r", user, workdir, cname))
 end
 
 local function read_recent()
@@ -319,30 +295,11 @@ local function add_recent(dir)
     if d ~= dir then table.insert(new, d) end
   end
   while #new > MAX_RECENT do table.remove(new) end
+  ensure_cache_dir()
   local f = io.open(RECENT_FILE, "w")
   if not f then return end
   for _, d in ipairs(new) do f:write(d .. "\n") end
   f:close()
-end
-
-function M.apply_to_config(config)
-  if is_windows then
-    config.default_prog = { "pwsh.exe", "-NoLogo", "-NoExit", "-File",
-      wezterm.config_dir .. "\\conf\\shell-integration.ps1" }
-  end
-end
-
-local function fast_connect(pane, host_dir)
-  local workdir = ensure_container(host_dir)
-  if not workdir then
-    docker_workdirs[pane:pane_id()] = nil
-    pane:send_text("echo '>>> [capsule] Error: failed to start container.'\r")
-    return
-  end
-  local user = dir_name(host_dir)
-  local cname = container_name(host_dir)
-  ensure_user(cname, user)
-  pane:send_text(string.format("docker exec -it -u %s -w %s %s zsh\r", user, workdir, cname))
 end
 
 local function docker_connect(pane, host_dir)
@@ -353,6 +310,23 @@ local function docker_connect(pane, host_dir)
     pane_build_and_connect(pane, host_dir, mtime)
   else
     fast_connect(pane, host_dir)
+  end
+end
+
+-- Public API
+
+function M.is_in_docker(pane)
+  return (pane:get_foreground_process_name() or ""):find("docker") ~= nil
+end
+
+function M.get_docker_workdir(pane)
+  return docker_workdirs[pane:pane_id()]
+end
+
+function M.apply_to_config(config)
+  if is_windows then
+    config.default_prog = { "pwsh.exe", "-NoLogo", "-NoExit", "-File",
+      wezterm.config_dir .. "\\scripts\\shell-integration.ps1" }
   end
 end
 
@@ -401,7 +375,22 @@ end
 
 function M.new_tab_recent(win, pane)
   pick_recent(win, pane, function(inner_win, inner_pane, label)
-    inner_win:perform_action(wezterm.action.SpawnCommandInNewTab({ cwd = label }), inner_pane)
+    win:perform_action(wezterm.action.Multiple({
+      wezterm.action.SpawnCommandInNewTab({ cwd = label }),
+      wezterm.action_callback(function(window, pane)
+        local tab = window:active_tab()
+        local active_pane = tab:active_pane()
+        active_pane:split({ direction = "Right", size = 0.5 })
+        local panes = tab:panes_with_info()
+        if #panes >= 2 then
+          panes[2].pane:split({ direction = "Right", size = 0.333 })
+          local final_panes = tab:panes_with_info()
+          if #final_panes >= 3 then
+            final_panes[2].pane:activate()
+          end
+        end
+      end),
+    }), inner_pane)
   end)
 end
 

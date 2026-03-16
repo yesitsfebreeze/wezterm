@@ -3,7 +3,9 @@ local wezterm = require("wezterm")
 local M = {}
 
 local VERSION = "1"
-local STAMP_FILE = wezterm.config_dir .. (os.getenv("OS") == "Windows_NT" and "\\" or "/") .. ".bootstrap"
+local SEP = os.getenv("OS") == "Windows_NT" and "\\" or "/"
+local CACHE_DIR = wezterm.config_dir .. SEP .. ".cache"
+local STAMP_FILE = CACHE_DIR .. SEP .. "bootstrap"
 local is_windows = os.getenv("OS") == "Windows_NT"
 
 local is_mac = (function()
@@ -52,6 +54,11 @@ function M.run()
     end
   end
 
+  if is_windows then
+    os.execute('mkdir "' .. CACHE_DIR:gsub("/", "\\") .. '" 2>nul')
+  else
+    os.execute('mkdir -p "' .. CACHE_DIR .. '"')
+  end
   f = io.open(STAMP_FILE, "w")
   if f then f:write(VERSION); f:close() end
 end

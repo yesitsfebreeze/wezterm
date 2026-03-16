@@ -2,11 +2,26 @@ local wezterm = require("wezterm")
 
 local M = {}
 
-local THEME = "Gooey (Gogh)"
+local THEME = "Kanagawa (Gogh)"
 local CURSOR = "#F3A246"
 local BG = "#19191f"
 local OPACITY = 0.7
-local STATE_FILE = wezterm.config_dir .. "/.image"
+local is_windows = os.getenv("OS") == "Windows_NT"
+local SEP = is_windows and "\\" or "/"
+local CACHE_DIR = wezterm.config_dir .. SEP .. ".cache"
+local STATE_FILE = CACHE_DIR .. SEP .. "image"
+local OPACITY_FILE = CACHE_DIR .. SEP .. "opacity_off"
+
+local cache_dir_ensured = false
+local function ensure_cache_dir()
+  if cache_dir_ensured then return end
+  if is_windows then
+    os.execute('mkdir "' .. CACHE_DIR:gsub("/", "\\") .. '" 2>nul')
+  else
+    os.execute('mkdir -p "' .. CACHE_DIR .. '"')
+  end
+  cache_dir_ensured = true
+end
 
 local function read_saved_image()
   local f = io.open(STATE_FILE, "r")
@@ -17,6 +32,7 @@ local function read_saved_image()
 end
 
 local function save_image(path)
+  ensure_cache_dir()
   local f = io.open(STATE_FILE, "w")
   if not f then return end
   f:write(path)
@@ -44,7 +60,7 @@ end
 function M.build_background(image_path)
   return {
     { width = "100%", height = "100%", opacity = OPACITY * OPACITY, source = { Color = BG } },
-    { source = { File = image_path }, opacity = OPACITY },
+    { source = { File = image_path }, opacity = OPACITY * OPACITY },
     { width = "100%", height = "100%", opacity = OPACITY, source = { Color = BG } },
   }
 end
@@ -65,18 +81,15 @@ end
 function M.apply_to_config(config)
   config.term = "xterm-256color"
   config.default_cursor_style = "BlinkingBlock"
-  config.animation_fps = 1
-  config.cursor_blink_rate = 0
+  config.animation_fps = 1 
+  config.cursor_blink_rate = 500
   config.audible_bell = "Disabled"
   config.scrollback_lines = 3500
   config.enable_scroll_bar = false
   config.window_decorations = "RESIZE"
 
   config.font_dirs = { wezterm.config_dir .. "/fonts" }
-  config.font = wezterm.font("DepartureMono Nerd Font Mono")
-  if wezterm.target_triple:match("darwin") then
-    config.font = wezterm.font("Departure Mono")
-  end
+  config.font = wezterm.font("DM Mono")
   config.font_size = 13
   config.line_height = 1.01
 
@@ -88,7 +101,19 @@ function M.apply_to_config(config)
   config.show_new_tab_button_in_tab_bar = false
   config.tab_max_width = 0
 
-  local colors = deep_copy(wezterm.color.get_builtin_schemes()[THEME])
+  config.inactive_pane_hsb = {
+    saturation = 0.4,
+    brightness = 0.4,
+  }
+
+  local scheme = wezterm.color.get_builtin_schemes()[THEME]
+  if not scheme then
+    wezterm.log_error("theme: '" .. THEME .. "' not found, falling back to default")
+    config.color_scheme = THEME
+    return
+  end
+
+  local colors = deep_copy(scheme)
   colors.cursor_bg = CURSOR
   colors.cursor_border = CURSOR
   colors.background = BG
@@ -109,6 +134,30 @@ function M.apply_to_config(config)
   local images = M.get_images()
   local current = read_saved_image() or images[1] or (wezterm.config_dir .. "/images/bg1.png")
   config.background = M.build_background(current)
+end
+
+function M.toggle_opacity(window)
+  local f = io.open(OPACITY_FILE, "r")
+  local is_off = f ~= nil
+  if f then f:close() end
+
+  local overrides = window:get_config_overrides() or {}
+  local current = read_saved_image() or (wezterm.config_dir .. "/images/bg1.png")
+
+  if is_off then
+    os.remove(OPACITY_FILE)
+    overrides.background = M.build_background(current)
+  else
+    ensure_cache_dir()
+    local fw = io.open(OPACITY_FILE, "w")
+    if fw then fw:close() end
+    overrides.background = {
+      { width = "100%", height = "100%", opacity = 0, source = { Color = BG } },
+      { source = { File = current }, opacity = 0 },
+      { width = "100%", height = "100%", opacity = 0, source = { Color = BG } },
+    }
+  end
+  window:set_config_overrides(overrides)
 end
 
 function M.cycle_background(window)

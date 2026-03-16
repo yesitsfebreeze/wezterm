@@ -3,8 +3,10 @@ local bootstrap = require("conf.bootstrap")
 local docker = require("conf.docker")
 local split = require("conf.split")
 local theme = require("conf.theme")
+local opencode_theme = require("conf.opencode_theme")
 
 bootstrap.run()
+opencode_theme.sync()
 
 local act = wezterm.action
 local config = wezterm.config_builder()
@@ -68,9 +70,9 @@ wezterm.on("update-right-status", function(window, pane)
 
   local cells = {}
   for i, tab in ipairs(tabs) do
-    local color = tab:tab_id() == active_id and "#50fa7b" or "#6272a4"
+    local color = tab:tab_id() == active_id and "#F3A246" or "#6272a4"
     table.insert(cells, { Foreground = { Color = color } })
-    table.insert(cells, { Text = tostring(i) })
+    table.insert(cells, { Text = tostring(i) .. " " })
   end
   table.insert(cells, { Foreground = { Color = "#6272a4" } })
   table.insert(cells, { Text = "  " .. wezterm.strftime("%H:%M") .. " " })
@@ -81,8 +83,10 @@ config.keys = {
   { key = "d", mods = "CTRL|SHIFT", action = wezterm.action_callback(docker.mount_current_dir) },
   { key = "b", mods = "CTRL|SHIFT", action = wezterm.action_callback(docker.force_rebuild) },
   { key = "Tab", mods = "SHIFT", action = wezterm.action_callback(split.toggle) },
+  { key = "Tab", mods = "CTRL|SHIFT", action = wezterm.action_callback(split.toggle_zoom) },
   { key = "s", mods = "CTRL|SHIFT", action = wezterm.action_callback(docker.show_recent) },
   { key = "t", mods = "CTRL|SHIFT", action = wezterm.action_callback(docker.new_tab_recent) },
+  { key = "o", mods = "CTRL|SHIFT", action = wezterm.action_callback(function(w) theme.toggle_opacity(w) end) },
   { key = "p", mods = "CTRL|SHIFT", action = wezterm.action_callback(function(w) theme.cycle_background(w) end) },
   { key = "v", mods = "CTRL", action = act.PasteFrom("Clipboard") },
 }
