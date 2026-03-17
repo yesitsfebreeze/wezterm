@@ -1,4 +1,5 @@
 local wezterm = require("wezterm")
+local process = require("conf.process")
 
 local M = {}
 
@@ -10,7 +11,7 @@ local is_windows = os.getenv("OS") == "Windows_NT"
 
 local is_mac = (function()
   local ok, stdout = pcall(function()
-    local _, s = wezterm.run_child_process({ "uname", "-s" })
+    local _, s = process.run({ "uname", "-s" })
     return s
   end)
   return ok and stdout and stdout:match("Darwin") ~= nil
@@ -33,10 +34,10 @@ local dependencies = {
 
 local function has_command(name)
   if is_windows then
-    local ok, _, stderr = wezterm.run_child_process({ "cmd.exe", "/c", "where " .. name })
+    local ok, _, stderr = process.run("where " .. name)
     return ok and (stderr == nil or stderr == "")
   else
-    local ok = wezterm.run_child_process({ "sh", "-c", "command -v " .. name })
+    local ok = process.run("command -v " .. name)
     return ok
   end
 end
@@ -50,7 +51,7 @@ function M.run()
   for _, dep in ipairs(dependencies) do
     if not has_command(dep.name) then
       local cmd = (is_windows and dep.win) or (is_mac and dep.mac) or dep.linux
-      wezterm.run_child_process({ cmd })
+      process.run(cmd)
     end
   end
 
