@@ -6,7 +6,7 @@ local M = {}
 local VERSION = "1"
 local SEP = os.getenv("OS") == "Windows_NT" and "\\" or "/"
 local CACHE_DIR = wezterm.config_dir .. SEP .. ".cache"
-local STAMP_FILE = CACHE_DIR .. SEP .. "bootstrap"
+local STAMP_FILE = CACHE_DIR .. SEP .. ".bootstrap"
 local is_windows = os.getenv("OS") == "Windows_NT"
 
 local is_mac = (function()

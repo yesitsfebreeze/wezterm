@@ -11,7 +11,7 @@ local is_mac = not is_windows
 local font_name = is_mac and "Departure Mono" or "DepartureMono Nerd Font"
 local SEP = is_windows and "\\" or "/"
 local CACHE_DIR = wezterm.config_dir .. SEP .. ".cache"
-local STATE_FILE = CACHE_DIR .. SEP .. "image"
+local STATE_FILE = CACHE_DIR .. SEP .. ".image"
 local OPACITY_FILE = CACHE_DIR .. SEP .. "opacity_off"
 
 local cache_dir_ensured = false
