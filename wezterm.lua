@@ -2,6 +2,7 @@ local wezterm = require("wezterm")
 local bootstrap = require("conf.bootstrap")
 local docker = require("conf.docker")
 local split = require("conf.split")
+local dropdown = require("conf.dropdown")
 local theme = require("conf.theme")
 local opencode_theme = require("conf.opencode_theme")
 
@@ -11,6 +12,10 @@ opencode_theme.sync()
 local act = wezterm.action
 local config = wezterm.config_builder()
 local is_windows = os.getenv("OS") == "Windows_NT"
+
+config.set_environment_variables = {
+  COLORTERM = "truecolor",
+}
 
 config.window_close_confirmation = "NeverPrompt"
 theme.apply_to_config(config)
@@ -88,6 +93,7 @@ config.keys = {
   { key = "t", mods = "CTRL|SHIFT", action = wezterm.action_callback(docker.new_tab_recent) },
   { key = "o", mods = "CTRL|SHIFT", action = wezterm.action_callback(function(w) theme.toggle_opacity(w) end) },
   { key = "p", mods = "CTRL|SHIFT", action = wezterm.action_callback(function(w) theme.cycle_background(w) end) },
+  { key = "`", mods = "CTRL", action = wezterm.action_callback(dropdown.toggle) },
   { key = "v", mods = "CTRL", action = act.PasteFrom("Clipboard") },
 }
 

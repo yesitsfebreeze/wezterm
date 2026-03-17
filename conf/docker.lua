@@ -1,4 +1,5 @@
 local wezterm = require("wezterm")
+local split = require("conf.split")
 
 local M = {}
 
@@ -34,6 +35,7 @@ local git_credentials_file = CACHE_DIR .. SEP .. "git-credentials"
 local git_credentials_refreshed = false
 
 local cache_dir_ensured = false
+local cached_git_creds_exists = nil
 local function ensure_cache_dir()
   if cache_dir_ensured then return end
   if is_windows then
@@ -143,9 +145,12 @@ local function volume_mounts(host_dir, username)
     docker_path(opencode_auth) .. ":/opt/opencode-auth/data",
     docker_path(opencode_config) .. ":/opt/opencode-auth/config",
   }
-  local f = io.open(git_credentials_file, "r")
-  if f then
-    f:close()
+  local f
+  if cached_git_creds_exists == nil then
+    f = io.open(git_credentials_file, "r")
+    cached_git_creds_exists = (f ~= nil)
+  end
+  if cached_git_creds_exists then
     table.insert(mounts, 3, docker_path(git_credentials_file) .. ":/opt/git-auth/.git-credentials:ro")
   end
   return mounts
@@ -378,17 +383,7 @@ function M.new_tab_recent(win, pane)
     win:perform_action(wezterm.action.Multiple({
       wezterm.action.SpawnCommandInNewTab({ cwd = label }),
       wezterm.action_callback(function(window, pane)
-        local tab = window:active_tab()
-        local active_pane = tab:active_pane()
-        active_pane:split({ direction = "Right", size = 0.5 })
-        local panes = tab:panes_with_info()
-        if #panes >= 2 then
-          panes[2].pane:split({ direction = "Right", size = 0.333 })
-          local final_panes = tab:panes_with_info()
-          if #final_panes >= 3 then
-            final_panes[2].pane:activate()
-          end
-        end
+        split.create_layout(window:active_tab())
       end),
     }), inner_pane)
   end)

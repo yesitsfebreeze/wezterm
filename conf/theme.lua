@@ -13,6 +13,7 @@ local STATE_FILE = CACHE_DIR .. SEP .. "image"
 local OPACITY_FILE = CACHE_DIR .. SEP .. "opacity_off"
 
 local cache_dir_ensured = false
+local cached_images = nil
 local function ensure_cache_dir()
   if cache_dir_ensured then return end
   if is_windows then
@@ -60,12 +61,13 @@ end
 function M.build_background(image_path)
   return {
     { width = "100%", height = "100%", opacity = OPACITY * OPACITY, source = { Color = BG } },
-    { source = { File = image_path }, opacity = OPACITY * OPACITY },
+    { source = { File = image_path }, opacity = OPACITY * OPACITY, width = "Cover", height = "Cover", horizontal_align = "Center", vertical_align = "Middle" },
     { width = "100%", height = "100%", opacity = OPACITY, source = { Color = BG } },
   }
 end
 
 function M.get_images()
+  if cached_images then return cached_images end
   local images = {}
   for _, entry in ipairs(wezterm.glob(wezterm.config_dir .. "/images/*")) do
     if entry:lower():match("%.png$") or entry:lower():match("%.jpe?g$")
@@ -75,6 +77,7 @@ function M.get_images()
     end
   end
   table.sort(images)
+  cached_images = images
   return images
 end
 
