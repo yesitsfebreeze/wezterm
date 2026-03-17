@@ -1,5 +1,6 @@
 local wezterm = require("wezterm")
 local split = require("conf.split")
+local process = require("conf.process")
 
 local M = {}
 
@@ -60,7 +61,7 @@ end
 
 local function run_cmd(...)
   local args = { ... }
-  local ok, stdout, stderr = wezterm.run_child_process(args)
+  local ok, stdout, stderr = process.run(args)
   if not ok and stderr and stderr ~= "" then
     wezterm.log_error("docker: " .. table.concat(args, " ") .. " | " .. stderr)
   end

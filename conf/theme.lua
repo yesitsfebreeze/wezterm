@@ -7,6 +7,8 @@ local CURSOR = "#F3A246"
 local BG = "#19191f"
 local OPACITY = 0.7
 local is_windows = os.getenv("OS") == "Windows_NT"
+local is_mac = not is_windows
+local font_name = is_mac and "Departure Mono" or "DepartureMono-Regular"
 local SEP = is_windows and "\\" or "/"
 local CACHE_DIR = wezterm.config_dir .. SEP .. ".cache"
 local STATE_FILE = CACHE_DIR .. SEP .. "image"
@@ -92,7 +94,7 @@ function M.apply_to_config(config)
   config.window_decorations = "RESIZE"
 
   config.font_dirs = { wezterm.config_dir .. "/fonts" }
-  config.font = wezterm.font("DM Mono")
+  config.font = wezterm.font(font_name)
   config.font_size = 13
   config.line_height = 1.01
 
