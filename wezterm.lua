@@ -26,32 +26,38 @@ wezterm.on("gui-attached", function()
   if window then window:gui_window():maximize() end
 end)
 
+wezterm.on("window-config-reloaded", function(window)
+  opencode_theme.on_reload(window)
+end)
+
 wezterm.on("format-tab-title", function()
   return { { Text = "" } }
 end)
 
 wezterm.on("update-right-status", function(window, pane)
+
+  local colors = theme.get_colors()
   local tabs = window:mux_window():tabs()
   local active_id = window:active_tab():tab_id()
 
   if docker.recent_picker_active then
     window:set_left_status(wezterm.format({
-      { Foreground = { Color = "#6272a4" } },
+      { Foreground = { Color = colors.muted } },
       { Text = " Recent: " },
     }))
   else
     local in_docker = docker.is_in_docker(pane)
     local left = in_docker
       and {
-        { Foreground = { Color = "#000000" } },
-        { Background = { Color = "#F3A246" } },
+          { Foreground = { Color = colors.background } },
+          { Background = { Color = colors.cursor_bg } },
         { Attribute = { Intensity = "Bold" } },
         { Text = " D " },
         { Attribute = { Intensity = "Normal" } },
         { Background = { Color = "transparent" } },
       }
       or {
-        { Foreground = { Color = "#F3A246" } },
+        { Foreground = { Color = colors.cursor_bg } },
         { Attribute = { Intensity = "Bold" } },
         { Text = " L " },
         { Attribute = { Intensity = "Normal" } },
@@ -68,18 +74,18 @@ wezterm.on("update-right-status", function(window, pane)
       end
     end
 
-    table.insert(left, { Foreground = { Color = "#6272a4" } })
+    table.insert(left, { Foreground = { Color = colors.muted } })
     table.insert(left, { Text = " " .. dir .. " " })
     window:set_left_status(wezterm.format(left))
   end
 
   local cells = {}
   for i, tab in ipairs(tabs) do
-    local color = tab:tab_id() == active_id and "#F3A246" or "#6272a4"
+    local color = tab:tab_id() == active_id and colors.cursor_bg or colors.muted
     table.insert(cells, { Foreground = { Color = color } })
     table.insert(cells, { Text = tostring(i) .. " " })
   end
-  table.insert(cells, { Foreground = { Color = "#6272a4" } })
+  table.insert(cells, { Foreground = { Color = colors.muted } })
   table.insert(cells, { Text = "  " .. wezterm.strftime("%H:%M") .. " " })
   window:set_right_status(wezterm.format(cells))
 end)

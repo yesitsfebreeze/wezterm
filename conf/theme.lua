@@ -2,10 +2,12 @@ local wezterm = require("wezterm")
 
 local M = {}
 
-local THEME = "Kanagawa (Gogh)"
-local CURSOR = "#F3A246"
-local BG = "#19191f"
-local OPACITY = 0.7
+local THEME = 'Gruvbox Material (Gogh)'
+local CURSOR = "#5cec5c"
+local BG = "#282828"
+local OPACITY = 0.8
+local BACKGROUND_OPACITY = 0.45
+local DIMMING = 0.8
 local is_windows = os.getenv("OS") == "Windows_NT"
 local is_mac = not is_windows
 local font_name = is_mac and "Departure Mono" or "DepartureMono Nerd Font"
@@ -13,6 +15,9 @@ local SEP = is_windows and "\\" or "/"
 local CACHE_DIR = wezterm.config_dir .. SEP .. ".cache"
 local STATE_FILE = CACHE_DIR .. SEP .. ".image"
 local OPACITY_FILE = CACHE_DIR .. SEP .. "opacity_off"
+
+M.CURSOR = CURSOR
+M.BG = BG
 
 local cache_dir_ensured = false
 local cached_images = nil
@@ -63,8 +68,8 @@ end
 function M.build_background(image_path)
   return {
     { width = "100%", height = "100%", opacity = OPACITY * OPACITY, source = { Color = BG } },
-    { source = { File = image_path }, opacity = OPACITY * OPACITY, width = "Cover", height = "Cover", horizontal_align = "Center", vertical_align = "Middle" },
-    { width = "100%", height = "100%", opacity = OPACITY, source = { Color = BG } },
+    { source = { File = image_path }, opacity = (OPACITY * OPACITY) * BACKGROUND_OPACITY, width = "Cover", height = "Cover", horizontal_align = "Center", vertical_align = "Middle" },
+    { width = "100%", height = "100%", opacity = 1.0 - BACKGROUND_OPACITY * BACKGROUND_OPACITY, source = { Color = BG } },
   }
 end
 
@@ -83,11 +88,24 @@ function M.get_images()
   return images
 end
 
+
+
+function M.get_colors()
+  local scheme = wezterm.color.get_builtin_schemes()[THEME]
+  local colors = deep_copy(scheme)
+  colors.cursor_bg = CURSOR
+  colors.cursor_border = CURSOR
+  colors.background = BG
+  colors.muted = colors.brights[1]
+
+  return colors
+end
+
 function M.apply_to_config(config)
   config.term = "xterm-256color"
-  config.default_cursor_style = "BlinkingBlock"
+  config.default_cursor_style = "SteadyBlock"
   config.animation_fps = 1 
-  config.cursor_blink_rate = 500
+  config.cursor_blink_rate = 0
   config.audible_bell = "Disabled"
   config.scrollback_lines = 3500
   config.enable_scroll_bar = false
@@ -107,8 +125,8 @@ function M.apply_to_config(config)
   config.tab_max_width = 0
 
   config.inactive_pane_hsb = {
-    saturation = 0.4,
-    brightness = 0.4,
+    saturation = DIMMING,
+    brightness = DIMMING,
   }
 
   local scheme = wezterm.color.get_builtin_schemes()[THEME]
